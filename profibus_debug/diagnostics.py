@@ -123,10 +123,36 @@ def read_diagnostics(
                 print(f"PHY-serial: warm-up complete — {responses}/{warmup_probes} responses")
 
         req = DpTelegram_SlaveDiag_Req(da=addr, sa=master_addr)
-        raw_req = req.toFdlTelegram().getRawData()
+        # PROFIBUS FDL: first request to a slave must have FCB=1, FCV=0
+        # ("start of new frame-count sequence, not yet counting").
+        # FCV=1 on first contact is rejected by CBP2 because the slave has no
+        # prior FCB record for this master.  FCV=0 + FCB=0 is also rejected.
+        raw_req = bytearray(req.toFdlTelegram().getRawData())
+        raw_req[6] = (raw_req[6] | FdlTelegram.FC_FCB) & ~FdlTelegram.FC_FCV
+        raw_req[-2] = sum(raw_req[4:-2]) & 0xFF
+        raw_req = bytes(raw_req)
+
+        raw_stat = FdlTelegram_FdlStat_Req(da=addr, sa=master_addr).getRawData()
+
+        # Mirror pyprofibus bus-allocation: allocate time for TX + 255 byte reply,
+        # just as CpPhy.send(maxReplyLen=255) would.  CBP2 requires the bus to be
+        # "quiet" for this reservation window before it accepts SlaveDiag.
+        _sec_per_byte = 11.0 / baudrate
+        _alloc_duration = _sec_per_byte * (len(raw_stat) + 255)
 
         for attempt in range(retries):
-            _drain_phy(phy)
+            _drain_phy(phy, settle=0.01)
+            _stat_sent_at = time.monotonic()
+            phy.sendData(raw_stat, srd=True)
+            _deadline_stat = _stat_sent_at + 0.15
+            while time.monotonic() < _deadline_stat:
+                _r = phy.pollData(min(0.01, _deadline_stat - time.monotonic()))
+                if _r is not None:
+                    break
+            # Wait until the bus-allocation window for the FdlStat expires.
+            _wait = (_stat_sent_at + _alloc_duration) - time.monotonic()
+            if _wait > 0:
+                time.sleep(_wait)
             phy.sendData(raw_req, srd=True)
 
             deadline = time.monotonic() + timeout

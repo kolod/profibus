@@ -144,8 +144,8 @@ def _print_diagnostics(diag: SlaveDiagnostics) -> None:
     def flag(label: str, value: bool, warn: bool = True) -> str:
         if value:
             colour = "red" if warn else "yellow"
-            return f"[{colour}]✖ {label}[/{colour}]"
-        return f"[green]✔ {label}[/green]"
+            return f"[{colour}][!] {label}[/{colour}]"
+        return f"[green][+] {label}[/green]"
 
     ident_str = f"0x{diag.ident_number:04X}"
     master_str = str(diag.master_addr) if diag.master_addr != 255 else "none"
@@ -161,22 +161,22 @@ def _print_diagnostics(diag: SlaveDiagnostics) -> None:
     status = Table.grid(padding=(0, 2))
     status.add_column()
     status.add_column()
-    status.add_row(flag("Station exists",        not diag.station_non_existent),
-                   flag("Station ready",          not diag.station_not_ready))
-    status.add_row(flag("Config OK",              not diag.cfg_fault),
-                   flag("Param OK",               not diag.prm_fault))
-    status.add_row(flag("No param request",       not diag.prm_req),
-                   flag("Supported",              not diag.not_supported))
-    status.add_row(flag("No master lock",         not diag.master_lock,  warn=False),
-                   flag("No invalid response",    not diag.invalid_slave_response))
-    status.add_row(flag("Watchdog",               diag.watchdog_on,      warn=False),
-                   flag("Freeze mode",            diag.freeze_mode,      warn=False))
-    status.add_row(flag("Sync mode",              diag.sync_mode,        warn=False),
-                   flag("Deactivated",            diag.deactivated,      warn=False))
+    status.add_row(flag("Non-existent",       diag.station_non_existent),
+                   flag("Not ready",          diag.station_not_ready))
+    status.add_row(flag("Config fault",       diag.cfg_fault),
+                   flag("Param fault",        diag.prm_fault))
+    status.add_row(flag("Param request",      diag.prm_req),
+                   flag("Not supported",      diag.not_supported))
+    status.add_row(flag("Master lock",        diag.master_lock,         warn=False),
+                   flag("Invalid response",   diag.invalid_slave_response))
+    status.add_row(flag("Watchdog",           diag.watchdog_on,         warn=False),
+                   flag("Freeze mode",        diag.freeze_mode,         warn=False))
+    status.add_row(flag("Sync mode",          diag.sync_mode,           warn=False),
+                   flag("Deactivated",        diag.deactivated,         warn=False))
     if diag.ext_diag_overflow:
         status.add_row("[yellow]⚠ Ext diag overflow[/yellow]", "")
 
-    console.print(Panel(info, title=f"[bold]Slave {diag.addr} — Diagnostics[/bold]", expand=False))
+    console.print(Panel(info, title=f"[bold]Slave {diag.addr} - Diagnostics[/bold]", expand=False))
     console.print(Panel(status, title="Station Status", expand=False))
 
     if diag.ext_diag_data:

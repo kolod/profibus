@@ -11,6 +11,7 @@ from rich.prompt import Prompt
 from rich.table import Table
 
 from profibus_debug.bus import discover_devices
+from profibus_debug.diagnostics import SlaveDiagnostics, read_diagnostics
 from profibus_debug.session import load_last_hwid, save_last_hwid
 
 console = Console()
@@ -94,6 +95,99 @@ def discover(
             else:
                 console.print(f"[bold red]Error:[/bold red] {exc}")
                 sys.exit(1)
+
+
+@cli.command()
+@click.argument("address", type=click.IntRange(0, 125))
+@click.option("--port", "-p", default=None, help="Serial port (e.g. COM3 or /dev/ttyUSB0).")
+@click.option("--baudrate", "-b", default=9600, show_default=True, help="Bus baud rate.")
+@click.option("--master-addr", default=0, show_default=True, help="Master station address.")
+@click.option("--timeout", default=0.5, show_default=True, help="Response timeout per attempt (s).")
+@click.option("--retries", default=3, show_default=True, help="Number of SlaveDiag retries.")
+@click.option("--warmup-probes", default=10, show_default=True, help="FdlStat probes sent before SlaveDiag to trigger baud-rate lock on devices like Siemens CBP2.")
+@click.option("--warmup-interval", default=0.1, show_default=True, help="Interval between warm-up probes (s).")
+@click.option("--debug", is_flag=True, default=False, help="Enable PHY debug output.")
+def diagnose(
+    address: int,
+    port: str | None,
+    baudrate: int,
+    master_addr: int,
+    timeout: float,
+    retries: int,
+    warmup_probes: int,
+    warmup_interval: float,
+    debug: bool,
+) -> None:
+    """Read DP slave diagnostics from a single slave ADDRESS (0–125)."""
+    resolved_port = resolve_port(port)
+    with console.status(f"[cyan]Reading diagnostics from slave {address}...[/cyan]"):
+        diag = read_diagnostics(
+            port=resolved_port,
+            addr=address,
+            baudrate=baudrate,
+            master_addr=master_addr,
+            timeout=timeout,
+            retries=retries,
+            warmup_probes=warmup_probes,
+            warmup_interval=warmup_interval,
+            debug=debug,
+        )
+    if diag is None:
+        console.print(f"[bold red]No response from slave {address}.[/bold red]")
+        sys.exit(1)
+    _print_diagnostics(diag)
+
+
+def _print_diagnostics(diag: SlaveDiagnostics) -> None:
+    from rich.panel import Panel
+
+    def flag(label: str, value: bool, warn: bool = True) -> str:
+        if value:
+            colour = "red" if warn else "yellow"
+            return f"[{colour}][!] {label}[/{colour}]"
+        return f"[green][+] {label}[/green]"
+
+    ident_str = f"0x{diag.ident_number:04X}"
+    master_str = str(diag.master_addr) if diag.master_addr != 255 else "none"
+
+    info = Table.grid(padding=(0, 2))
+    info.add_column(style="bold")
+    info.add_column()
+    info.add_row("Slave address", str(diag.addr))
+    info.add_row("Ident number", ident_str)
+    info.add_row("Owned by master", master_str)
+    info.add_row("Ready for data exchange", "yes" if diag.ready_for_data_exchange else "[red]no[/red]")
+
+    status = Table.grid(padding=(0, 2))
+    status.add_column()
+    status.add_column()
+    status.add_row(flag("Non-existent",       diag.station_non_existent),
+                   flag("Not ready",          diag.station_not_ready))
+    status.add_row(flag("Config fault",       diag.cfg_fault),
+                   flag("Param fault",        diag.prm_fault))
+    status.add_row(flag("Param request",      diag.prm_req),
+                   flag("Not supported",      diag.not_supported))
+    status.add_row(flag("Master lock",        diag.master_lock,         warn=False),
+                   flag("Invalid response",   diag.invalid_slave_response))
+    status.add_row(flag("Watchdog",           diag.watchdog_on,         warn=False),
+                   flag("Freeze mode",        diag.freeze_mode,         warn=False))
+    status.add_row(flag("Sync mode",          diag.sync_mode,           warn=False),
+                   flag("Deactivated",        diag.deactivated,         warn=False))
+    if diag.ext_diag_overflow:
+        status.add_row("[yellow]⚠ Ext diag overflow[/yellow]", "")
+
+    console.print(Panel(info, title=f"[bold]Slave {diag.addr} - Diagnostics[/bold]", expand=False))
+    console.print(Panel(status, title="Station Status", expand=False))
+
+    if diag.ext_diag_data:
+        hex_str = " ".join(f"{b:02X}" for b in diag.ext_diag_data)
+        ext = Table.grid(padding=(0, 2))
+        ext.add_column(style="bold")
+        ext.add_column(style="dim")
+        ext.add_row("Raw bytes", hex_str)
+        console.print(Panel(ext, title="Extended Diagnostics", expand=False))
+    else:
+        console.print("[dim]No extended diagnostic data.[/dim]")
 
 
 def _run_discover(port: str, baudrate: int, master_addr: int, timeout: float, debug: bool) -> None:

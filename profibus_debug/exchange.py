@@ -22,13 +22,19 @@ _ADDR_MASK = 0x7F
 
 
 def _patch_fc(raw: bytearray, fcb: FdlFCB) -> None:
-    fc = raw[6] & ~(FdlTelegram.FC_FCB | FdlTelegram.FC_FCV)
+    # SD1 (0x10): [SD1, DA, SA, FC, FCS, ED] — FC at index 3, FCS at index 4
+    # SD2 (0x68): [SD2, LE, LEr, SD2, DA, SA, FC, ..., FCS, ED] — FC at index 6
+    if raw[0] == 0x10:
+        fc_idx, fcs_slice = 3, slice(1, 4)
+    else:
+        fc_idx, fcs_slice = 6, slice(4, -2)
+    fc = raw[fc_idx] & ~(FdlTelegram.FC_FCB | FdlTelegram.FC_FCV)
     if fcb.bitIsOn():
         fc |= FdlTelegram.FC_FCB
     if fcb.bitIsValid():
         fc |= FdlTelegram.FC_FCV
-    raw[6] = fc
-    raw[-2] = sum(raw[4:-2]) & 0xFF
+    raw[fc_idx] = fc
+    raw[-2] = sum(raw[fcs_slice]) & 0xFF
 
 
 def _send_wait_ack(

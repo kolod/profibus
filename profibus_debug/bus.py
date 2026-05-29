@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import time
 from collections.abc import Callable
+from time import monotonic
 from typing import Iterator
 
 from pyprofibus.fdl import FdlTelegram, FdlTelegram_FdlStat_Req
@@ -43,10 +43,10 @@ def discover_devices(
             req = FdlTelegram_FdlStat_Req(da=addr, sa=master_addr)
             phy.sendData(req.getRawData(), srd=True)
 
-            deadline = time.monotonic() + timeout_per_addr
+            deadline = monotonic() + timeout_per_addr
             found = False
             while True:
-                remaining = deadline - time.monotonic()
+                remaining = deadline - monotonic()
                 if remaining <= 0:
                     break
                 raw = phy.pollData(min(0.01, remaining))

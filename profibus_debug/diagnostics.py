@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass, field
+from time import monotonic, sleep
 
 from pyprofibus.dp import DpTelegram_SlaveDiag_Con, DpTelegram_SlaveDiag_Req
 from pyprofibus.fdl import FdlTelegram, FdlTelegram_FdlStat_Req
@@ -58,12 +58,12 @@ class SlaveDiagnostics:
 
 def _drain_phy(phy: CpPhySerial, settle: float = 0.03) -> None:
     """Flush the receive buffer by polling until silent for `settle` seconds."""
-    deadline = time.monotonic() + settle
-    while time.monotonic() < deadline:
-        data = phy.pollData(min(0.005, deadline - time.monotonic()))
+    deadline = monotonic() + settle
+    while monotonic() < deadline:
+        data = phy.pollData(min(0.005, deadline - monotonic()))
         if data is not None:
             # Received something — reset the settle window
-            deadline = time.monotonic() + settle
+            deadline = monotonic() + settle
 
 
 def _warmup(phy: CpPhySerial, addr: int, master_addr: int,
@@ -77,9 +77,9 @@ def _warmup(phy: CpPhySerial, addr: int, master_addr: int,
     for i in range(probes):
         _drain_phy(phy, settle=0.01)
         phy.sendData(raw_stat, srd=True)
-        deadline = time.monotonic() + interval
-        while time.monotonic() < deadline:
-            raw = phy.pollData(min(0.01, deadline - time.monotonic()))
+        deadline = monotonic() + interval
+        while monotonic() < deadline:
+            raw = phy.pollData(min(0.01, deadline - monotonic()))
             if raw is None:
                 continue
             try:
@@ -142,22 +142,22 @@ def read_diagnostics(
 
         for attempt in range(retries):
             _drain_phy(phy, settle=0.01)
-            _stat_sent_at = time.monotonic()
+            _stat_sent_at = monotonic()
             phy.sendData(raw_stat, srd=True)
             _deadline_stat = _stat_sent_at + 0.15
-            while time.monotonic() < _deadline_stat:
-                _r = phy.pollData(min(0.01, _deadline_stat - time.monotonic()))
+            while monotonic() < _deadline_stat:
+                _r = phy.pollData(min(0.01, _deadline_stat - monotonic()))
                 if _r is not None:
                     break
             # Wait until the bus-allocation window for the FdlStat expires.
-            _wait = (_stat_sent_at + _alloc_duration) - time.monotonic()
+            _wait = (_stat_sent_at + _alloc_duration) - monotonic()
             if _wait > 0:
-                time.sleep(_wait)
+                sleep(_wait)
             phy.sendData(raw_req, srd=True)
 
-            deadline = time.monotonic() + timeout
-            while time.monotonic() < deadline:
-                remaining = deadline - time.monotonic()
+            deadline = monotonic() + timeout
+            while monotonic() < deadline:
+                remaining = deadline - monotonic()
                 raw = phy.pollData(min(0.02, remaining))
                 if raw is None:
                     continue

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import time
 from collections.abc import Callable
+from time import monotonic, sleep
 
 from pyprofibus.dp import (
     DpCfgDataElement,
@@ -47,9 +47,9 @@ def _send_wait_ack(
     """Send telegram and wait for Short ACK or any valid response from slave."""
     _drain_phy(phy, settle=0.01)
     phy.sendData(raw, srd=True)
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        data = phy.pollData(min(0.01, deadline - time.monotonic()))
+    deadline = monotonic() + timeout
+    while monotonic() < deadline:
+        data = phy.pollData(min(0.01, deadline - monotonic()))
         if data is None:
             continue
         try:
@@ -109,15 +109,15 @@ def _bus_alloc_send(phy: CpPhySerial, raw_stat: bytes, alloc_duration: float) ->
     allocation window so that CBP2-style devices accept the following request.
     """
     _drain_phy(phy, settle=0.01)
-    t0 = time.monotonic()
+    t0 = monotonic()
     phy.sendData(raw_stat, srd=True)
     deadline = t0 + 0.15
-    while time.monotonic() < deadline:
-        if phy.pollData(min(0.01, deadline - time.monotonic())) is not None:
+    while monotonic() < deadline:
+        if phy.pollData(min(0.01, deadline - monotonic())) is not None:
             break
-    wait = (t0 + alloc_duration) - time.monotonic()
+    wait = (t0 + alloc_duration) - monotonic()
     if wait > 0:
-        time.sleep(wait)
+        sleep(wait)
 
 
 def exchange_data(
@@ -171,15 +171,15 @@ def exchange_data(
 
         # Poll SlaveDiag until ready (up to 10 s)
         ready = False
-        ready_deadline = time.monotonic() + 10.0
-        while time.monotonic() < ready_deadline:
+        ready_deadline = monotonic() + 10.0
+        while monotonic() < ready_deadline:
             _bus_alloc_send(phy, raw_stat, _alloc)
             raw_diag = _make_diag(addr, master_addr, fcb)
             _drain_phy(phy, settle=0.01)
             phy.sendData(raw_diag, srd=True)
-            diag_deadline = time.monotonic() + timeout
-            while time.monotonic() < diag_deadline:
-                raw = phy.pollData(min(0.01, diag_deadline - time.monotonic()))
+            diag_deadline = monotonic() + timeout
+            while monotonic() < diag_deadline:
+                raw = phy.pollData(min(0.01, diag_deadline - monotonic()))
                 if raw is None:
                     continue
                 try:
@@ -204,7 +204,7 @@ def exchange_data(
                 break
             if ready:
                 break
-            time.sleep(0.2)
+            sleep(0.2)
 
         if not ready:
             raise RuntimeError(f"Slave {addr} did not become ready for data exchange")
@@ -218,10 +218,10 @@ def exchange_data(
             _drain_phy(phy, settle=0.01)
             phy.sendData(raw_dx, srd=True)
 
-            dx_deadline = time.monotonic() + timeout
+            dx_deadline = monotonic() + timeout
             in_data: bytes | None = None
-            while time.monotonic() < dx_deadline:
-                raw = phy.pollData(min(0.01, dx_deadline - time.monotonic()))
+            while monotonic() < dx_deadline:
+                raw = phy.pollData(min(0.01, dx_deadline - monotonic()))
                 if raw is None:
                     continue
                 try:
@@ -250,7 +250,7 @@ def exchange_data(
 
             i += 1
             if count == 0 or i < count:
-                time.sleep(interval)
+                sleep(interval)
 
     finally:
         phy.close()

@@ -12,6 +12,8 @@ from rich.table import Table
 
 from profibus_debug.bus import discover_devices
 from profibus_debug.diagnostics import SlaveDiagnostics, read_diagnostics
+from profibus_debug.exchange import exchange_data
+from profibus_debug.gsd import GsdDevice, GsdModule, parse_gsd
 from profibus_debug.session import load_last_hwid, save_last_hwid
 
 console = Console()
@@ -136,6 +138,130 @@ def diagnose(
         console.print(f"[bold red]No response from slave {address}.[/bold red]")
         sys.exit(1)
     _print_diagnostics(diag)
+
+
+@cli.command()
+@click.argument("address", type=click.IntRange(0, 125))
+@click.argument("gsd_file", type=click.Path(exists=True, dir_okay=False))
+@click.option("--port", "-p", default=None, help="Serial port (e.g. COM3 or /dev/ttyUSB0).")
+@click.option("--baudrate", "-b", default=9600, show_default=True, help="Bus baud rate.")
+@click.option("--master-addr", default=0, show_default=True, help="Master station address.")
+@click.option("--module", "-m", default=None, help="Module name (partial match). Default: first module.")
+@click.option("--count", "-n", default=1, show_default=True, help="Number of data exchange cycles (0 = continuous).")
+@click.option("--interval", default=0.2, show_default=True, help="Interval between cycles (s).")
+@click.option("--timeout", default=0.5, show_default=True, help="Response timeout (s).")
+@click.option("--warmup-probes", default=5, show_default=True, help="FdlStat warm-up probes before startup.")
+@click.option("--debug", is_flag=True, default=False, help="Enable PHY debug output.")
+def exchange(
+    address: int,
+    gsd_file: str,
+    port: str | None,
+    baudrate: int,
+    master_addr: int,
+    module: str | None,
+    count: int,
+    interval: float,
+    timeout: float,
+    warmup_probes: int,
+    debug: bool,
+) -> None:
+    """Run DP data exchange with slave ADDRESS using GSD_FILE device description.
+
+    Performs the full DP startup sequence (SetPrm + ChkCfg) then reads
+    cyclic process data. ADDRESS is 0-125. GSD_FILE is the path to the
+    device's GSD/GSE file.
+    """
+    from pathlib import Path
+    resolved_port = resolve_port(port)
+
+    try:
+        device = parse_gsd(Path(gsd_file))
+    except Exception as exc:
+        console.print(f"[bold red]Failed to parse GSD:[/bold red] {exc}")
+        sys.exit(1)
+
+    if not device.modules:
+        console.print("[bold red]No modules defined in GSD file.[/bold red]")
+        sys.exit(1)
+
+    selected: GsdModule | None = None
+    if module:
+        needle = module.lower()
+        for m in device.modules:
+            if needle in m.name.lower():
+                selected = m
+                break
+        if selected is None:
+            console.print(f"[bold red]Module '{module}' not found.[/bold red] Available:")
+            for m in device.modules:
+                console.print(f"  {m.name}  ({m.input_bytes}B in, {m.output_bytes}B out)")
+            sys.exit(1)
+    else:
+        selected = device.modules[0]
+
+    console.print(f"[cyan]Device:[/cyan] {device.vendor_name} {device.model_name}  "
+                  f"(ident [bold]{device.ident_number:#06x}[/bold])")
+    console.print(f"[cyan]Module:[/cyan] {selected.name}  "
+                  f"({selected.input_bytes}B in, {selected.output_bytes}B out)")
+
+    cycles_done = 0
+
+    def on_cycle(i: int, data: bytes) -> None:
+        nonlocal cycles_done
+        cycles_done += 1
+        _print_exchange_data(address, selected, data)  # type: ignore[arg-type]
+
+    try:
+        with console.status(f"[cyan]Starting up slave {address}...[/cyan]"):
+            results = exchange_data(
+                port=resolved_port,
+                addr=address,
+                device=device,
+                module=selected,
+                baudrate=baudrate,
+                master_addr=master_addr,
+                timeout=timeout,
+                warmup_probes=warmup_probes,
+                count=count,
+                interval=interval,
+                debug=debug,
+                on_cycle=on_cycle,
+            )
+    except Exception as exc:
+        console.print(f"[bold red]Error:[/bold red] {exc}")
+        sys.exit(1)
+
+    if not results:
+        console.print(f"[yellow]No data received from slave {address}.[/yellow]")
+        sys.exit(1)
+
+
+def _print_exchange_data(addr: int, module: GsdModule, data: bytes) -> None:
+    from rich.panel import Panel
+
+    hex_str = " ".join(f"{b:02X}" for b in data)
+
+    rows: list[tuple[str, str]] = [("Raw bytes", hex_str)]
+
+    if module.input_bytes == 2 and len(data) == 2:
+        pos = int.from_bytes(data, "big")
+        rows.append(("Position (16-bit, big-endian)", str(pos)))
+    elif module.input_bytes == 4 and len(data) == 4:
+        pos = int.from_bytes(data, "big")
+        rows.append(("Position (32-bit, big-endian)", str(pos)))
+    elif module.input_bytes == 6 and len(data) == 6:
+        pos = int.from_bytes(data[:4], "big")
+        rpm_raw = int.from_bytes(data[4:6], "big")
+        rows.append(("Position (32-bit, big-endian)", str(pos)))
+        rows.append(("Speed raw (16-bit)", str(rpm_raw)))
+
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(style="bold")
+    grid.add_column(style="dim")
+    for label, value in rows:
+        grid.add_row(label, value)
+
+    console.print(Panel(grid, title=f"[bold]Slave {addr} - Data Exchange[/bold]", expand=False))
 
 
 def _print_diagnostics(diag: SlaveDiagnostics) -> None:

@@ -35,7 +35,7 @@ This repository contains a Python console application. Use `uv` for environment 
 - Prefer standard library modules first, then add dependencies only when they provide clear value.
 - Avoid hidden side effects in imports.
 - Keep functions short and testable.
-- Use only from ... import ... form.
+- **Always use `from X import Y` form for every import — never bare `import X`.** This applies to the standard library (`from sys import exit`), third-party packages (`from click import group, option`), and submodules (`from serial.tools import list_ports`). No exceptions.
 - Prefer use of pathlib.
 
 ## Validation

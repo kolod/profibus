@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import sys
-import time
+from pathlib import Path
+from sys import exit
+from time import sleep
 
-import click
-import serial.tools.list_ports
+from click import argument, group, IntRange, option, Path as ClickPath
+from serial.tools import list_ports
 from rich.console import Console
 from rich.live import Live
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
@@ -24,11 +25,11 @@ def resolve_port(port: str | None) -> str:
     if port:
         return port
 
-    ports = list(serial.tools.list_ports.comports())
+    ports = list(list_ports.comports())
     if not ports:
         console.print("[yellow]No serial ports detected.[/yellow]")
         console.print("[dim]Connect a device and try again, or pass --port explicitly.[/dim]")
-        sys.exit(1)
+        exit(1)
 
     last_hwid = load_last_hwid()
     default_idx: int | None = None
@@ -53,7 +54,7 @@ def resolve_port(port: str | None) -> str:
     while True:
         answer = Prompt.ask(f"[bold cyan]Select port[/bold cyan] [dim]{hint}[/dim]", default=default_str).strip()
         if answer.lower() == "x":
-            sys.exit(0)
+            exit(0)
         if answer.isdigit() and 0 <= int(answer) < len(ports):
             selected = ports[int(answer)]
             if selected.hwid:
@@ -62,18 +63,18 @@ def resolve_port(port: str | None) -> str:
         console.print(f"[red]Invalid selection.[/red] Enter a number 0–{len(ports) - 1} or x.")
 
 
-@click.group()
+@group()
 def cli() -> None:
     """PROFIBUS DP debug tool."""
 
 
 @cli.command()
-@click.option("--port", "-p", default=None, help="Serial port (e.g. COM3 or /dev/ttyUSB0).")
-@click.option("--baudrate", "-b", default=9600, show_default=True, help="Bus baud rate.")
-@click.option("--master-addr", default=0, show_default=True, help="Master station address.")
-@click.option("--timeout", default=0.05, show_default=True, help="Per-address probe timeout (s).")
-@click.option("--autoreconnect", "-r", is_flag=True, default=False, help="Retry on serial disconnect.")
-@click.option("--debug", is_flag=True, default=False, help="Enable PHY debug output.")
+@option("--port", "-p", default=None, help="Serial port (e.g. COM3 or /dev/ttyUSB0).")
+@option("--baudrate", "-b", default=9600, show_default=True, help="Bus baud rate.")
+@option("--master-addr", default=0, show_default=True, help="Master station address.")
+@option("--timeout", default=0.05, show_default=True, help="Per-address probe timeout (s).")
+@option("--autoreconnect", "-r", is_flag=True, default=False, help="Retry on serial disconnect.")
+@option("--debug", is_flag=True, default=False, help="Enable PHY debug output.")
 def discover(
     port: str | None,
     baudrate: int,
@@ -97,19 +98,19 @@ def discover(
                 console.print("[green]Port available again, retrying...[/green]")
             else:
                 console.print(f"[bold red]Error:[/bold red] {exc}")
-                sys.exit(1)
+                exit(1)
 
 
 @cli.command()
-@click.argument("address", type=click.IntRange(0, 125))
-@click.option("--port", "-p", default=None, help="Serial port (e.g. COM3 or /dev/ttyUSB0).")
-@click.option("--baudrate", "-b", default=9600, show_default=True, help="Bus baud rate.")
-@click.option("--master-addr", default=0, show_default=True, help="Master station address.")
-@click.option("--timeout", default=0.5, show_default=True, help="Response timeout per attempt (s).")
-@click.option("--retries", default=3, show_default=True, help="Number of SlaveDiag retries.")
-@click.option("--warmup-probes", default=10, show_default=True, help="FdlStat probes sent before SlaveDiag to trigger baud-rate lock on devices like Siemens CBP2.")
-@click.option("--warmup-interval", default=0.1, show_default=True, help="Interval between warm-up probes (s).")
-@click.option("--debug", is_flag=True, default=False, help="Enable PHY debug output.")
+@argument("address", type=IntRange(0, 125))
+@option("--port", "-p", default=None, help="Serial port (e.g. COM3 or /dev/ttyUSB0).")
+@option("--baudrate", "-b", default=9600, show_default=True, help="Bus baud rate.")
+@option("--master-addr", default=0, show_default=True, help="Master station address.")
+@option("--timeout", default=0.5, show_default=True, help="Response timeout per attempt (s).")
+@option("--retries", default=3, show_default=True, help="Number of SlaveDiag retries.")
+@option("--warmup-probes", default=10, show_default=True, help="FdlStat probes sent before SlaveDiag to trigger baud-rate lock on devices like Siemens CBP2.")
+@option("--warmup-interval", default=0.1, show_default=True, help="Interval between warm-up probes (s).")
+@option("--debug", is_flag=True, default=False, help="Enable PHY debug output.")
 def diagnose(
     address: int,
     port: str | None,
@@ -137,22 +138,22 @@ def diagnose(
         )
     if diag is None:
         console.print(f"[bold red]No response from slave {address}.[/bold red]")
-        sys.exit(1)
+        exit(1)
     _print_diagnostics(diag)
 
 
 @cli.command()
-@click.argument("address", type=click.IntRange(0, 125))
-@click.argument("gsd_file", type=click.Path(exists=True, dir_okay=False))
-@click.option("--port", "-p", default=None, help="Serial port (e.g. COM3 or /dev/ttyUSB0).")
-@click.option("--baudrate", "-b", default=9600, show_default=True, help="Bus baud rate.")
-@click.option("--master-addr", default=0, show_default=True, help="Master station address.")
-@click.option("--module", "-m", default=None, help="Module name (partial match). Default: first module.")
-@click.option("--count", "-n", default=1, show_default=True, help="Number of data exchange cycles (0 = continuous).")
-@click.option("--interval", default=0.2, show_default=True, help="Interval between cycles (s).")
-@click.option("--timeout", default=0.5, show_default=True, help="Response timeout (s).")
-@click.option("--warmup-probes", default=5, show_default=True, help="FdlStat warm-up probes before startup.")
-@click.option("--debug", is_flag=True, default=False, help="Enable PHY debug output.")
+@argument("address", type=IntRange(0, 125))
+@argument("gsd_file", type=ClickPath(exists=True, dir_okay=False))
+@option("--port", "-p", default=None, help="Serial port (e.g. COM3 or /dev/ttyUSB0).")
+@option("--baudrate", "-b", default=9600, show_default=True, help="Bus baud rate.")
+@option("--master-addr", default=0, show_default=True, help="Master station address.")
+@option("--module", "-m", default=None, help="Module name (partial match). Default: first module.")
+@option("--count", "-n", default=1, show_default=True, help="Number of data exchange cycles (0 = continuous).")
+@option("--interval", default=0.2, show_default=True, help="Interval between cycles (s).")
+@option("--timeout", default=0.5, show_default=True, help="Response timeout (s).")
+@option("--warmup-probes", default=5, show_default=True, help="FdlStat warm-up probes before startup.")
+@option("--debug", is_flag=True, default=False, help="Enable PHY debug output.")
 def exchange(
     address: int,
     gsd_file: str,
@@ -172,18 +173,17 @@ def exchange(
     cyclic process data. ADDRESS is 0-125. GSD_FILE is the path to the
     device's GSD/GSE file.
     """
-    from pathlib import Path
     resolved_port = resolve_port(port)
 
     try:
         device = parse_gsd(Path(gsd_file))
     except Exception as exc:
         console.print(f"[bold red]Failed to parse GSD:[/bold red] {exc}")
-        sys.exit(1)
+        exit(1)
 
     if not device.modules:
         console.print("[bold red]No modules defined in GSD file.[/bold red]")
-        sys.exit(1)
+        exit(1)
 
     selected: GsdModule | None = None
     if module:
@@ -196,7 +196,7 @@ def exchange(
             console.print(f"[bold red]Module '{module}' not found.[/bold red] Available:")
             for m in device.modules:
                 console.print(f"  {m.name}  ({m.input_bytes}B in, {m.output_bytes}B out)")
-            sys.exit(1)
+            exit(1)
     else:
         selected = device.modules[0]
 
@@ -229,11 +229,11 @@ def exchange(
             )
     except Exception as exc:
         console.print(f"[bold red]Error:[/bold red] {exc}")
-        sys.exit(1)
+        exit(1)
 
     if not results:
         console.print(f"[yellow]No data received from slave {address}.[/yellow]")
-        sys.exit(1)
+        exit(1)
 
     if count == 1:
         console.print(live_panel[0])
@@ -266,7 +266,7 @@ def exchange(
         pass
     except Exception as exc:
         console.print(f"[bold red]Error:[/bold red] {exc}")
-        sys.exit(1)
+        exit(1)
 
 
 def _build_exchange_panel(addr: int, module: GsdModule, data: bytes):
@@ -388,21 +388,21 @@ def _run_discover(port: str, baudrate: int, master_addr: int, timeout: float, de
 
 def _is_serial_error(exc: Exception) -> bool:
     try:
-        import serial
-        return isinstance(exc, (serial.SerialException, OSError))
+        from serial import SerialException
+        return isinstance(exc, (SerialException, OSError))
     except ImportError:
         return isinstance(exc, OSError)
 
 
 def _wait_for_port(port: str, interval: float = 2.0) -> None:
-    import serial
+    from serial import Serial, SerialException
     while True:
         try:
-            s = serial.Serial(port)
+            s = Serial(port)
             s.close()
             return
-        except serial.SerialException:
-            time.sleep(interval)
+        except SerialException:
+            sleep(interval)
 
 
 if __name__ == "__main__":

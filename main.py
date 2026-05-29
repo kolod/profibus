@@ -102,8 +102,10 @@ def discover(
 @click.option("--port", "-p", default=None, help="Serial port (e.g. COM3 or /dev/ttyUSB0).")
 @click.option("--baudrate", "-b", default=9600, show_default=True, help="Bus baud rate.")
 @click.option("--master-addr", default=0, show_default=True, help="Master station address.")
-@click.option("--timeout", default=0.5, show_default=True, help="Response timeout (s).")
-@click.option("--retries", default=3, show_default=True, help="Number of request retries.")
+@click.option("--timeout", default=0.5, show_default=True, help="Response timeout per attempt (s).")
+@click.option("--retries", default=3, show_default=True, help="Number of SlaveDiag retries.")
+@click.option("--warmup-probes", default=10, show_default=True, help="FdlStat probes sent before SlaveDiag to trigger baud-rate lock on devices like Siemens CBP2.")
+@click.option("--warmup-interval", default=0.1, show_default=True, help="Interval between warm-up probes (s).")
 @click.option("--debug", is_flag=True, default=False, help="Enable PHY debug output.")
 def diagnose(
     address: int,
@@ -112,6 +114,8 @@ def diagnose(
     master_addr: int,
     timeout: float,
     retries: int,
+    warmup_probes: int,
+    warmup_interval: float,
     debug: bool,
 ) -> None:
     """Read DP slave diagnostics from a single slave ADDRESS (0–125)."""
@@ -124,6 +128,8 @@ def diagnose(
             master_addr=master_addr,
             timeout=timeout,
             retries=retries,
+            warmup_probes=warmup_probes,
+            warmup_interval=warmup_interval,
             debug=debug,
         )
     if diag is None:

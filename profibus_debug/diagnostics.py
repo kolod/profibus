@@ -4,7 +4,7 @@ import time
 from dataclasses import dataclass, field
 
 from pyprofibus.dp import DpTelegram_SlaveDiag_Con, DpTelegram_SlaveDiag_Req
-from pyprofibus.fdl import FdlTelegram
+from pyprofibus.fdl import FdlTelegram, FdlTelegram_FdlStat_Req
 from pyprofibus.phy_serial import CpPhySerial
 from pyprofibus.util import bytesToHex
 
@@ -66,6 +66,35 @@ def _drain_phy(phy: CpPhySerial, settle: float = 0.03) -> None:
             deadline = time.monotonic() + settle
 
 
+def _warmup(phy: CpPhySerial, addr: int, master_addr: int,
+            probes: int, interval: float, debug: bool) -> int:
+    """Send FdlStat probes until the slave responds, to trigger CBP2 baud-rate lock.
+
+    Returns the number of responses received.
+    """
+    raw_stat = FdlTelegram_FdlStat_Req(da=addr, sa=master_addr).getRawData()
+    responses = 0
+    for i in range(probes):
+        _drain_phy(phy, settle=0.01)
+        phy.sendData(raw_stat, srd=True)
+        deadline = time.monotonic() + interval
+        while time.monotonic() < deadline:
+            raw = phy.pollData(min(0.01, deadline - time.monotonic()))
+            if raw is None:
+                continue
+            try:
+                fdl = FdlTelegram.fromRawData(raw)
+            except Exception:
+                continue
+            sa = (getattr(fdl, "sa", None) or 0) & _ADDR_MASK
+            if sa == addr:
+                responses += 1
+                if debug:
+                    print(f"PHY-serial: warm-up response {responses} on probe {i + 1}/{probes}")
+                break
+    return responses
+
+
 def read_diagnostics(
     port: str,
     addr: int,
@@ -73,14 +102,26 @@ def read_diagnostics(
     master_addr: int = 0,
     timeout: float = 0.5,
     retries: int = 3,
+    warmup_probes: int = 10,
+    warmup_interval: float = 0.1,
     debug: bool = False,
 ) -> SlaveDiagnostics | None:
     """Request DP slave diagnostics from a single slave address.
+
+    Sends FdlStat warm-up probes first so devices like the Siemens CBP2
+    board can complete baud-rate auto-detection before the SlaveDiag
+    request is sent.
 
     Returns None if the slave does not respond within the timeout.
     """
     phy = open_phy(port, baudrate, debug)
     try:
+        if warmup_probes > 0:
+            responses = _warmup(phy, addr, master_addr,
+                                warmup_probes, warmup_interval, debug)
+            if debug:
+                print(f"PHY-serial: warm-up complete — {responses}/{warmup_probes} responses")
+
         req = DpTelegram_SlaveDiag_Req(da=addr, sa=master_addr)
         raw_req = req.toFdlTelegram().getRawData()
 

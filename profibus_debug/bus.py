@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from typing import Iterator
 
 from pyprofibus.fdl import FdlTelegram, FdlTelegram_FdlStat_Req
-from pyprofibus.phy import PhyError
 from pyprofibus.phy_serial import CpPhySerial
 
 
@@ -26,6 +26,7 @@ def discover_devices(
     master_addr: int = 0,
     timeout_per_addr: float = 0.05,
     debug: bool = False,
+    on_probe: Callable[[int], None] | None = None,
 ) -> Iterator[int]:
     """Yield addresses of responding PROFIBUS DP slaves (0–125).
 
@@ -35,6 +36,8 @@ def discover_devices(
     phy = open_phy(port, baudrate, debug)
     try:
         for addr in range(0, 126):
+            if on_probe:
+                on_probe(addr)
             _drain(phy)
 
             req = FdlTelegram_FdlStat_Req(da=addr, sa=master_addr)

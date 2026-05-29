@@ -6,6 +6,7 @@ import time
 import click
 import serial.tools.list_ports
 from rich.console import Console
+from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.prompt import Prompt
 from rich.table import Table
 
@@ -97,17 +98,34 @@ def discover(
 
 def _run_discover(port: str, baudrate: int, master_addr: int, timeout: float, debug: bool) -> None:
     found: list[int] = []
+    total = 126
 
-    with console.status(f"[cyan]Scanning PROFIBUS addresses 0–125 on {port}...[/cyan]"):
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("[cyan]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        console=console,
+    )
+    with progress:
+        task = progress.add_task(f"Scanning {port}", total=total)
+
+        def on_probe(addr: int) -> None:
+            progress.update(task, completed=addr, description=f"Scanning {port}  addr {addr:3d}/{total - 1}")
+
         for addr in discover_devices(
             port=port,
             baudrate=baudrate,
             master_addr=master_addr,
             timeout_per_addr=timeout,
             debug=debug,
+            on_probe=on_probe,
         ):
             found.append(addr)
-            console.log(f"[green]Found slave at address {addr}[/green]")
+            progress.console.log(f"[green]Found slave at address {addr}[/green]")
+
+        progress.update(task, completed=total, description=f"Scanning {port}  done")
 
     if not found:
         console.print("[yellow]No slaves found.[/yellow]")

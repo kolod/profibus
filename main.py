@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from sys import exit
 from time import sleep
@@ -15,10 +16,17 @@ from rich.table import Table
 from profibus_debug.bus import discover_devices
 from profibus_debug.diagnostics import SlaveDiagnostics, read_diagnostics
 from profibus_debug.exchange import exchange_data
-from profibus_debug.gsd import GsdDevice, GsdModule, parse_gsd
+from profibus_debug.gsd import GsdDevice, GsdModule, parse_gsd, _decode_cfg_sizes
 from profibus_debug.session import load_last_hwid, save_last_hwid
 
 console = Console()
+
+
+def _parse_hex(value: str) -> bytes:
+    cleaned = value.replace(" ", "").replace(":", "").replace("-", "")
+    if len(cleaned) % 2:
+        raise ValueError(f"odd number of hex digits: {value!r}")
+    return bytes(int(cleaned[i:i + 2], 16) for i in range(0, len(cleaned), 2))
 
 
 def resolve_port(port: str | None) -> str:
@@ -153,6 +161,8 @@ def diagnose(
 @option("--interval", default=0.2, show_default=True, help="Interval between cycles (s).")
 @option("--timeout", default=0.5, show_default=True, help="Response timeout (s).")
 @option("--warmup-probes", default=5, show_default=True, help="FdlStat warm-up probes before startup.")
+@option("--cfg-bytes", default=None, help="Override ChkCfg bytes (hex, e.g. '10 20 30').")
+@option("--prm-bytes", default=None, help="Override SetPrm user parameter bytes (hex).")
 @option("--debug", is_flag=True, default=False, help="Enable PHY debug output.")
 def exchange(
     address: int,
@@ -165,6 +175,8 @@ def exchange(
     interval: float,
     timeout: float,
     warmup_probes: int,
+    cfg_bytes: str | None,
+    prm_bytes: str | None,
     debug: bool,
 ) -> None:
     """Run DP data exchange with slave ADDRESS using GSD_FILE device description.
@@ -199,6 +211,23 @@ def exchange(
             exit(1)
     else:
         selected = device.modules[0]
+
+    if cfg_bytes is not None:
+        try:
+            parsed_cfg = _parse_hex(cfg_bytes)
+        except ValueError as exc:
+            console.print(f"[bold red]Invalid --cfg-bytes:[/bold red] {exc}")
+            exit(1)
+        in_b, out_b = _decode_cfg_sizes(parsed_cfg)
+        selected = replace(selected, cfg_bytes=parsed_cfg, input_bytes=in_b, output_bytes=out_b)
+
+    if prm_bytes is not None:
+        try:
+            parsed_prm = _parse_hex(prm_bytes)
+        except ValueError as exc:
+            console.print(f"[bold red]Invalid --prm-bytes:[/bold red] {exc}")
+            exit(1)
+        selected = replace(selected, user_prm_data=parsed_prm)
 
     console.print(f"[cyan]Device:[/cyan] {device.vendor_name} {device.model_name}  "
                   f"(ident [bold]{device.ident_number:#06x}[/bold])")

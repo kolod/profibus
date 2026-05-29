@@ -6,6 +6,7 @@ import time
 import click
 import serial.tools.list_ports
 from rich.console import Console
+from rich.live import Live
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.prompt import Prompt
 from rich.table import Table
@@ -204,15 +205,14 @@ def exchange(
     console.print(f"[cyan]Module:[/cyan] {selected.name}  "
                   f"({selected.input_bytes}B in, {selected.output_bytes}B out)")
 
-    cycles_done = 0
+    live_panel: list = [None]  # mutable container so on_cycle can update it
 
     def on_cycle(i: int, data: bytes) -> None:
-        nonlocal cycles_done
-        cycles_done += 1
-        _print_exchange_data(address, selected, data)  # type: ignore[arg-type]
+        live_panel[0] = _build_exchange_panel(address, selected, data)  # type: ignore[arg-type]
 
     try:
         with console.status(f"[cyan]Starting up slave {address}...[/cyan]"):
+            # Run the first cycle before entering Live so the panel exists
             results = exchange_data(
                 port=resolved_port,
                 addr=address,
@@ -222,7 +222,7 @@ def exchange(
                 master_addr=master_addr,
                 timeout=timeout,
                 warmup_probes=warmup_probes,
-                count=count,
+                count=min(count, 1) if count != 0 else 1,
                 interval=interval,
                 debug=debug,
                 on_cycle=on_cycle,
@@ -235,25 +235,53 @@ def exchange(
         console.print(f"[yellow]No data received from slave {address}.[/yellow]")
         sys.exit(1)
 
+    if count == 1:
+        console.print(live_panel[0])
+        return
 
-def _print_exchange_data(addr: int, module: GsdModule, data: bytes) -> None:
+    # Continuous or multi-cycle: update in place
+    remaining = count - 1 if count > 1 else 0
+
+    try:
+        with Live(live_panel[0], console=console, refresh_per_second=10) as live:
+            def on_cycle_live(i: int, data: bytes) -> None:
+                live_panel[0] = _build_exchange_panel(address, selected, data)  # type: ignore[arg-type]
+                live.update(live_panel[0])
+
+            exchange_data(
+                port=resolved_port,
+                addr=address,
+                device=device,
+                module=selected,
+                baudrate=baudrate,
+                master_addr=master_addr,
+                timeout=timeout,
+                warmup_probes=0,
+                count=remaining,
+                interval=interval,
+                debug=debug,
+                on_cycle=on_cycle_live,
+            )
+    except KeyboardInterrupt:
+        pass
+    except Exception as exc:
+        console.print(f"[bold red]Error:[/bold red] {exc}")
+        sys.exit(1)
+
+
+def _build_exchange_panel(addr: int, module: GsdModule, data: bytes):
     from rich.panel import Panel
 
     hex_str = " ".join(f"{b:02X}" for b in data)
-
     rows: list[tuple[str, str]] = [("Raw bytes", hex_str)]
 
     if module.input_bytes == 2 and len(data) == 2:
-        pos = int.from_bytes(data, "big")
-        rows.append(("Position (16-bit, big-endian)", str(pos)))
+        rows.append(("Position (16-bit)", str(int.from_bytes(data, "big"))))
     elif module.input_bytes == 4 and len(data) == 4:
-        pos = int.from_bytes(data, "big")
-        rows.append(("Position (32-bit, big-endian)", str(pos)))
+        rows.append(("Position (32-bit)", str(int.from_bytes(data, "big"))))
     elif module.input_bytes == 6 and len(data) == 6:
-        pos = int.from_bytes(data[:4], "big")
-        rpm_raw = int.from_bytes(data[4:6], "big")
-        rows.append(("Position (32-bit, big-endian)", str(pos)))
-        rows.append(("Speed raw (16-bit)", str(rpm_raw)))
+        rows.append(("Position (32-bit)", str(int.from_bytes(data[:4], "big"))))
+        rows.append(("Speed raw (16-bit)", str(int.from_bytes(data[4:6], "big"))))
 
     grid = Table.grid(padding=(0, 2))
     grid.add_column(style="bold")
@@ -261,7 +289,7 @@ def _print_exchange_data(addr: int, module: GsdModule, data: bytes) -> None:
     for label, value in rows:
         grid.add_row(label, value)
 
-    console.print(Panel(grid, title=f"[bold]Slave {addr} - Data Exchange[/bold]", expand=False))
+    return Panel(grid, title=f"[bold]Slave {addr} - Data Exchange[/bold]", expand=False)
 
 
 def _print_diagnostics(diag: SlaveDiagnostics) -> None:
